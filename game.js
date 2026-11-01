@@ -13,17 +13,17 @@
     get: function (k, d) { try { var v = localStorage.getItem('patang_' + k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
     set: function (k, v) { try { localStorage.setItem('patang_' + k, JSON.stringify(v)); } catch (e) { } }
   };
-  var save = { hi: store.get('hi', 0), coins: store.get('coins', 0), owned: store.get('owned', ['classic']), sel: store.get('sel', 'classic'), sound: store.get('sound', true), played: store.get('played', 0) };
-  function persist() { store.set('hi', save.hi); store.set('coins', save.coins); store.set('owned', save.owned); store.set('sel', save.sel); store.set('sound', save.sound); store.set('played', save.played); }
+  var save = { hi: store.get('hi', 0), coins: store.get('coins', 0), owned: store.get('owned', ['classic']), sel: store.get('sel', 'classic'), sound: store.get('sound', true), played: store.get('played', 0), tutDone: store.get('tutDone', false), duels: store.get('duels', 0) };
+  function persist() { store.set('hi', save.hi); store.set('coins', save.coins); store.set('owned', save.owned); store.set('sel', save.sel); store.set('sound', save.sound); store.set('played', save.played); store.set('tutDone', save.tutDone); store.set('duels', save.duels); }
   Snd.setMuted(!save.sound);
 
   var DESIGNS = [
     { id: 'classic', name: 'Lal Patang', price: 0, pat: 'split', cols: ['#e8242c', '#ffd23c', '#ff8a00'], perk: 'Seedhi saadi patang', zone: 0, manja: 1, rival: 1 },
-    { id: 'tiranga', name: 'Tiranga', price: 60, pat: 'tiranga', cols: ['#ff9933', '#ffffff', '#138808'], perk: 'Hari patti 10% badi', zone: 0.10, manja: 1, rival: 1 },
+    { id: 'tiranga', name: 'Tiranga', price: 60, pat: 'tiranga', cols: ['#ff9933', '#ffffff', '#138808'], perk: 'Pench mein tap ka zor 15% zyada', zone: 0.10, manja: 1, rival: 1 },
     { id: 'neel', name: 'Neel Gagan', price: 110, pat: 'stripes', cols: ['#1e63d6', '#ffffff', '#7fc2ff'], perk: 'Manja dheere khatam hota hai', zone: 0, manja: 0.6, rival: 1 },
-    { id: 'gulabi', name: 'Gulabi Rani', price: 170, pat: 'star', cols: ['#ff4fa3', '#fff2a8', '#ffffff'], perk: 'Hari patti 15% badi', zone: 0.15, manja: 1, rival: 1 },
+    { id: 'gulabi', name: 'Gulabi Rani', price: 170, pat: 'star', cols: ['#ff4fa3', '#fff2a8', '#ffffff'], perk: 'Pench mein tap ka zor 22% zyada', zone: 0.15, manja: 1, rival: 1 },
     { id: 'sunehri', name: 'Sunehri Shaan', price: 260, pat: 'checks', cols: ['#ffc400', '#b3261e', '#ffffff'], perk: 'Rival ka zor 12% kam', zone: 0.05, manja: 1, rival: 0.88 },
-    { id: 'rangeela', name: 'Rangeela', price: 380, pat: 'rainbow', cols: ['#e53935', '#fdd835', '#1e88e5', '#43a047'], perk: 'Patti 18% badi, manja kam kharch', zone: 0.18, manja: 0.7, rival: 1 },
+    { id: 'rangeela', name: 'Rangeela', price: 380, pat: 'rainbow', cols: ['#e53935', '#fdd835', '#1e88e5', '#43a047'], perk: 'Tap ka zor 27% zyada, manja kam kharch', zone: 0.18, manja: 0.7, rival: 1 },
     { id: 'kaala', name: 'Kaala Naag', price: 550, pat: 'cobra', cols: ['#16161e', '#ff3b3b', '#ffffff'], perk: 'Rival ka zor 22% kam', zone: 0.08, manja: 0.8, rival: 0.78 }
   ];
   function design(id) { for (var i = 0; i < DESIGNS.length; i++) if (DESIGNS[i].id === id) return DESIGNS[i]; return DESIGNS[0]; }
@@ -45,6 +45,7 @@
   var score = 0, lives = 3, wave = 1, combo = 0, coinsEarned = 0, cuts = 0, strongT = 0, slowT = 0, waveState = 'intro', waveT = 0, goT = 0, itemT = 8;
   var paused = false, newBest = false, hintT = 0, shopIdx = 0, shopMsg = 0, shopKite = null, swipe = null, demo = null, toast = null;
   var introKites = [];
+  var tut = null, lastInput = 0;
 
   /* ---------- sizing ---------- */
   function resize() {
@@ -107,8 +108,25 @@
     if (t >= 0 && t <= 1 && u >= 0 && u <= 1) return { x: a.x + r1x * t, y: a.y + r1y * t };
     return null;
   }
-  function strCross(A, B) {
-    for (var i = 0; i < A.length - 1; i++) for (var j = 0; j < B.length - 1; j++) { var h = segHit(A[i], A[i + 1], B[j], B[j + 1]); if (h) return h; }
+  function ptSeg(px, py, a, b) {
+    var dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy, u = l2 > 0 ? clamp(((px - a.x) * dx + (py - a.y) * dy) / l2, 0, 1) : 0;
+    var qx = a.x + dx * u, qy = a.y + dy * u;
+    return { d: Math.hypot(px - qx, py - qy), x: qx, y: qy };
+  }
+  /* tol = extra "hit area" in px: strings that pass within tol of each other also count as crossing */
+  function strCross(A, B, tol) {
+    var i, j, h;
+    for (i = 0; i < A.length - 1; i++) for (j = 0; j < B.length - 1; j++) { h = segHit(A[i], A[i + 1], B[j], B[j + 1]); if (h) return h; }
+    if (tol) {
+      var best = null, bd = tol;
+      for (i = 0; i < A.length - 1; i++) for (j = 0; j < B.length - 1; j++) {
+        var a = A[i], a2 = A[i + 1], b = B[j], b2 = B[j + 1];
+        if (Math.min(a.x, a2.x) - tol > Math.max(b.x, b2.x) || Math.max(a.x, a2.x) + tol < Math.min(b.x, b2.x) || Math.min(a.y, a2.y) - tol > Math.max(b.y, b2.y) || Math.max(a.y, a2.y) + tol < Math.min(b.y, b2.y)) continue;
+        var c = [ptSeg(a.x, a.y, b, b2), ptSeg(a2.x, a2.y, b, b2), ptSeg(b.x, b.y, a, a2), ptSeg(b2.x, b2.y, a, a2)];
+        for (var q = 0; q < 4; q++) if (c[q].d < bd) { bd = c[q].d; best = { x: c[q].x, y: c[q].y }; }
+      }
+      if (best) return best;
+    }
     return null;
   }
 
@@ -212,29 +230,31 @@
   /* ---------- game logic ---------- */
   function ANCH_X() { return W / 2 + 15; }
   function ANCH_Y() { return H - 76; }
-  function makePlayer() {
+  function makePlayer(resp) {
     var d = design(save.sel), k = makeKite(ANCH_X(), ANCH_Y() - 40, d);
-    k.w = 46; k.h = 54; k.ax = ANCH_X(); k.ay = ANCH_Y(); k.alive = true; k.immuneT = 2; k.manja = 100; k.tension = 0; k.d = d; k.vy = -380; k.khT = 0; k.wasPull = false; k.respawnT = 0; k.hold = H - 370;
+    k.w = 46; k.h = 54; k.ax = ANCH_X(); k.ay = ANCH_Y(); k.alive = true; k.immuneT = resp ? 4.5 : 3; k.manja = 100; k.tension = 0; k.d = d; k.vy = -380; k.khT = 0; k.wasPull = false; k.respawnT = 0; k.hold = H - 370;
     return k;
   }
-  function startGame() {
-    score = 0; lives = 3; wave = 1; combo = 0; coinsEarned = 0; cuts = 0; strongT = 0; slowT = 0; duel = null; paused = false; newBest = false;
-    rivals = []; falling = []; items = []; particles = []; popups = []; shouts = []; goT = 0; itemT = 9; ts = 1; hintT = 7; save.played++; persist();
-    player = makePlayer(); steer = null; pullCount = 0; ptrs = {}; sceneD = 0; targetD = 0;
-    spawnWave(1);
+  function startGame(mode) {
+    var doTut = mode === 'tut' || (mode === undefined && !save.tutDone);
+    score = 0; lives = 5; wave = 1; combo = 0; coinsEarned = 0; cuts = 0; strongT = 0; slowT = 0; duel = null; paused = false; newBest = false;
+    rivals = []; falling = []; items = []; particles = []; popups = []; shouts = []; goT = 0; itemT = 9; ts = 1; hintT = doTut ? 0 : 7; save.played++; persist();
+    player = makePlayer(); steer = null; pullCount = 0; ptrs = {}; sceneD = 0; targetD = 0; lastInput = T; banner = null;
+    if (doTut) { tut = { step: 0, t: 0, stepT: 0, prog: 0, okT: 0, fin: 3.2, dummy: null }; player.immuneT = 0; waveState = 'tut'; wave = 1; }
+    else { tut = null; spawnWave(1); }
     setState('play', true);
   }
   function spawnWave(n) {
     wave = n; waveState = 'intro'; waveT = 2.4;
-    var cnt = [2, 3, 3, 4, 4, 5, 5, 6][Math.min(n, 8) - 1] || 6;
-    var sk = Math.min(0.92, 0.22 + 0.075 * (n - 1));
+    var cnt = [2, 2, 3, 3, 4, 4, 5, 5][Math.min(n, 8) - 1] || 5;
+    var sk = Math.min(0.85, 0.12 + 0.06 * (n - 1));
     var names = NAMES.slice().sort(function () { return Math.random() - 0.5; });
     var used = {}, nUsed = 0, pats = RPAT.slice().sort(function () { return Math.random() - 0.5; });
     rivals = [];
     for (var i = 0; i < cnt; i++) {
       var side = i % 2 ? 1 : -1, pd = pats[i % pats.length];
       var r = makeKite(side < 0 ? -50 : W + 50, rand(60, 200), { pat: pd[0], cols: pd[1] });
-      r.name = names[i]; r.skill = clamp(sk + rand(-0.07, 0.08), 0.12, 0.97); r.mode = 'wander'; r.modeT = rand(1.5, 3); r.cd = 3 + i * 0.6; r.t = rand(0, 5);
+      r.name = names[i]; r.skill = clamp(sk + rand(-0.07, 0.08), 0.12, 0.97); r.mode = 'wander'; r.modeT = rand(1.5, 3); r.cd = 1.5 + i * 3.2; r.t = rand(0, 5);
       var ri; do { ri = (Math.random() * roofs.length) | 0; } while (used[ri] && nUsed < roofs.length);
       used[ri] = 1; nUsed++; r.ax = clamp(roofs[ri].x, 14, W - 14); r.ay = cityY() + roofs[ri].y - 16;
       r.tx = rand(60, W - 60); r.ty = rand(120, H - 400); r.sag = rand(18, 32); r.w = 42; r.h = 50;
@@ -255,31 +275,32 @@
     cheerT = 2.5; petals(W / 2, 220, 40, 260);
   }
 
+  /* Pench = simple mash: tap anywhere (or hold KHENCH) fills YOUR bar, rival fills slowly. No timing, no penalty. */
+  function tapMul() { return 1 + player.d.zone * 1.5; }
   function duelPush() {
-    var r = duel.r, base = 0.1 + r.skill * 0.2;
-    return base * player.d.rival * (strongT > 0 ? 0.6 : 1) * (1 + (1 - player.manja / 100) * 0.45);
+    var r = duel.r; if (duel.tut || duel.t < 1) return 0;
+    var wk = wave <= 2 ? 0.55 : wave <= 4 ? 0.8 : 1;
+    var base = (0.045 + r.skill * 0.1) * wk * (1 + 0.03 * wave);
+    return base * player.d.rival * (strongT > 0 ? 0.6 : 1) * (1 + (1 - player.manja / 100) * 0.25);
   }
   function startDuel(r, pt) {
-    duel = { r: r, t: 0, bar: 0, ph: Math.random() * 2, lock: 0, ix: pt.x, iy: pt.y, spike: rand(1.1, 2), msg: '', msgT: 0, msgCol: '#fff', perfects: 0 };
-    duel.speed = Math.min(3.0, 1.5 + wave * 0.1 + r.skill * 0.55);
-    r.mode = 'duel'; Snd.sfx.duelStart(); shout('LADAI!', '#ff8a5b'); shake = Math.max(shake, 6); flash = 0.4; flashCol = '#fff2c0';
+    duel = { r: r, t: 0, bar: tut ? 0 : 0.2, lastTap: -9, streak: 0, taps: 0, ix: pt.x, iy: pt.y, msg: '', msgT: 0, msgCol: '#fff', perfects: 0, tut: !!tut };
+    if (tut) { tut.step = 3; tut.okT = 0; tut.stepT = 0; }
+    save.duels++; persist();
+    r.mode = 'duel'; Snd.sfx.duelStart(); shout('PENCH!', '#ff8a5b'); shake = Math.max(shake, 6); flash = 0.4; flashCol = '#fff2c0';
     sparks(pt.x, pt.y, 24, ['#fff7c0', '#ffd23c', '#ffffff'], 220, 0.6);
     ring(pt.x, pt.y, '#ffe6a0', 70);
     steer = null; for (var k in ptrs) if (ptrs[k].role === 'steer') ptrs[k].role = 'tap';
   }
-  function zoneHalf() {
-    var z = 0.13 * (1 + player.d.zone + (strongT > 0 ? 0.5 : 0)) * (0.62 + 0.38 * player.manja / 100);
-    return clamp(z, 0.07, 0.27);
-  }
-  function markerPos() { var p = duel.ph % 2; return p < 1 ? p : 2 - p; }
   function duelTap() {
-    if (!duel || duel.lock > 0) return;
-    var d = Math.abs(markerPos() - 0.5), zh = zoneHalf();
-    if (d < zh * 0.42) { duel.bar += 0.42; duel.msg = 'PERFECT!'; duel.msgCol = '#7dff8a'; duel.perfects++; Snd.sfx.perfect(); sparks(duel.ix, duel.iy, 14, ['#fff7c0', '#7dff8a'], 200, 0.5); shake = Math.max(shake, 4); }
-    else if (d < zh) { duel.bar += 0.27; duel.msg = 'ACHHA!'; duel.msgCol = '#ffe066'; Snd.sfx.good(); sparks(duel.ix, duel.iy, 8, ['#ffd23c'], 150, 0.4); }
-    else { duel.bar -= 0.15; duel.lock = 0.28; duel.msg = 'CHUK GAYE!'; duel.msgCol = '#ff6b6b'; Snd.sfx.miss(); shake = Math.max(shake, 3); }
-    duel.msgT = 0.6;
+    if (!duel) return;
+    var gain = 0.08 * tapMul() * (strongT > 0 ? 1.35 : 1);
+    duel.bar += gain; duel.taps++;
+    var fast = T - duel.lastTap < 0.34; duel.lastTap = T; duel.streak = fast ? duel.streak + 1 : 0;
+    if (fast && duel.streak % 8 === 0) { duel.perfects++; duel.bar += 0.04; duel.msg = 'SHABASH!'; duel.msgCol = '#7dff8a'; duel.msgT = 0.7; Snd.sfx.perfect(); sparks(duel.ix, duel.iy, 14, ['#fff7c0', '#7dff8a'], 200, 0.5); shake = Math.max(shake, 4); }
+    else { Snd.sfx.good(); sparks(duel.ix, duel.iy, 4, ['#ffd23c', '#fff'], 130, 0.35); }
   }
+  function khenchDown() { for (var k in ptrs) if (ptrs[k].role === 'pull') return true; return false; }
   function cutKite(k, isPlayer, ix, iy) {
     var f = { x: k.x, y: k.y, vx: rand(-20, 30), vy: -20, rot: k.rot, w: k.w, h: k.h, tail: k.tail, cols: k.cols, pat: k.pat, seed: k.seed, str: newPts(16), t: 0, spin: rand(-2.5, 2.5), isPlayer: isPlayer, flut: 0 };
     for (var i = 0; i < 16; i++) { f.str[i].x = lerp(ix, k.x, i / 15); f.str[i].y = lerp(iy, k.y, i / 15); }
@@ -296,9 +317,10 @@
       shout(SHOUTS[(Math.random() * SHOUTS.length) | 0], '#ffd23c');
       popup(r.x, r.y - 30, '+' + pts, '#fff', 24); popup(r.x, r.y - 6, '+' + cn + ' coins', '#ffe066', 14);
       if (combo > 1) popup(player.x, player.y - 50, 'COMBO x' + combo, '#7dff8a', 18);
-      if (rivals.length === 0 && waveState !== 'clear') clearWave();
+      if (tut) { tut.step = 4; tut.fin = 3.2; save.tutDone = true; persist(); shout('KAI PO CHE!', '#ffd23c'); }
+      else if (rivals.length === 0 && waveState !== 'clear') clearWave();
     } else {
-      combo = 0; r.mode = 'wander'; r.modeT = 3; r.cd = 4;
+      combo = 0; r.mode = 'wander'; r.modeT = 3; r.cd = 6;
       player.alive = false; lives--; cutKite(player, true, ix, iy); shout('KATI GAYI!', '#ff6b6b');
       popup(player.x, player.y - 30, 'Patang kat gayi', '#ffb0b0', 16);
       if (lives <= 0) goT = 2.4; else player.respawnT = 1.9;
@@ -315,13 +337,13 @@
   }
   function updatePlayer(p, rdt, dt) {
     if (!p.alive) {
-      if (p.respawnT > 0) { p.respawnT -= rdt; if (p.respawnT <= 0 && lives > 0) { player = makePlayer(); steer = null; Snd.sfx.life(); } }
+      if (p.respawnT > 0) { p.respawnT -= rdt; if (p.respawnT <= 0 && lives > 0) { player = makePlayer(true); steer = null; lastInput = T; Snd.sfx.life(); popup(player.x, player.y - 60, 'SURAKSHIT! 4 second', '#9fe8ff', 15); } }
       return;
     }
     p.immuneT = Math.max(0, p.immuneT - dt);
     if (!duel) {
       var pulling = pullHeld() && p.manja > 2;
-      if (pulling && p.manja < 14 && !p.wasPull) pulling = false;
+      if (pulling && p.manja < 8 && !p.wasPull) pulling = false;
       var tx = p.x, ty = p.y;
       for (var k in ptrs) { var q = ptrs[k]; if (q.role === 'steer') { tx = q.kx + (q.x - q.sx) * 1.4; ty = q.ky + (q.y - q.sy) * 1.4; if (Math.hypot(q.x - q.lx, q.y - q.ly) > 2.5) q.still = 0; else q.still += rdt; q.lx = q.x; q.ly = q.y; } }
       var hasSteer = false; for (var k2 in ptrs) if (ptrs[k2].role === 'steer') hasSteer = true;
@@ -336,7 +358,7 @@
       if (pulling && !p.wasPull) Snd.sfx.khench();
       if (pulling && Math.random() < 0.5) sparks(p.x, p.y + 6, 1, ['#ffffff', '#ffe9a0'], 40, 0.35);
       p.wasPull = pulling;
-      if (pulling) { if (strongT <= 0) p.manja = Math.max(0, p.manja - 14 * p.d.manja * dt); } else p.manja = Math.min(100, p.manja + 9 * dt);
+      if (pulling) { if (strongT <= 0) p.manja = Math.max(0, p.manja - 4 * p.d.manja * dt); } else p.manja = Math.min(100, p.manja + 16 * dt); if (tut) p.manja = 100;
       p.tension += ((pulling ? 1 : 0) - p.tension) * Math.min(1, dt * 10);
       p.rot += (clamp(p.vx * 0.0016, -0.5, 0.5) + Math.sin(T * 3) * 0.03 - p.rot) * Math.min(1, dt * 9);
       p.khT = pulling ? p.khT + dt : 0;
@@ -349,20 +371,25 @@
   }
   function updateRival(r, dt) {
     r.t += dt; r.modeT -= dt; r.cd -= dt;
-    var p = player, sk = r.skill;
+    var p = player, sk = r.skill, spd = tut ? 0.7 : wave <= 2 ? 0.55 : wave <= 4 ? 0.75 : 1;
     if (r.mode === 'duel') { r.vx = r.vy = 0; r.rot += (Math.sin(T * 30) * 0.12 - r.rot) * 0.4; }
     else {
       if (r.mode === 'wander') {
         if (r.modeT <= 0) {
-          if (r.cd <= 0 && p.alive && p.immuneT <= 0 && waveState === 'fight' && Math.random() < 0.55 + sk * 0.4) { r.mode = 'attack'; r.modeT = rand(3, 5); Snd.sfx.rival(); }
+          var att = 0; for (var q = 0; q < rivals.length; q++) if (rivals[q].mode === 'attack') att++;
+          if (r.cd <= 0 && p.alive && p.immuneT <= 0 && waveState === 'fight' && att < (wave <= 3 ? 1 : 2) && Math.random() < 0.85) { r.mode = 'attack'; r.modeT = rand(4, 6); Snd.sfx.rival(); }
           else { r.tx = clamp(r.ax + rand(-120, 120), 40, W - 40); r.ty = rand(100, H - 330); r.modeT = rand(1.5, 3.5); }
         }
       } else if (r.mode === 'attack') {
+        /* rival comes to YOU: it aims at a point just across your string so the strings always meet */
         if (!p.alive || p.immuneT > 1.2) r.modeT = 0;
-        else { r.tx = p.x + p.vx * sk * 0.3 + Math.sin(r.t * 3) * (1 - sk) * 40; r.ty = p.y + 40 + (1 - sk) * 60; }
-        if (r.modeT <= 0) { r.mode = 'wander'; r.cd = rand(2, 4) * (1.5 - sk); r.modeT = 0.5; }
+        else { var side = r.ax < p.ax ? 1 : -1, mid = p.str[8]; r.tx = mid.x + side * 30; r.ty = mid.y + 4; }
+        if (r.modeT <= 0) { r.mode = 'wander'; r.cd = rand(1.5, 3) * (1.5 - sk); r.modeT = 0.5; }
+      } else if (r.mode === 'tutdummy') {
+        var as = tut ? clamp((tut.stepT - 8) / 8, 0, 1) : 1, sd = r.ax < p.ax ? 1 : -1, md = p.str[8];
+        r.tx = lerp(r.hx + Math.sin(r.t * 1.3) * 8, md.x + sd * 30, as); r.ty = lerp(r.hy + Math.cos(r.t * 1.1) * 6, md.y + 4, as);
       }
-      var att = r.mode === 'attack', kk = att ? 7 + sk * 16 : 4.5, dm = att ? 6 + sk * 4 : 4.2, mx = att ? 130 + sk * 190 : 85;
+      var at = r.mode === 'attack' || r.mode === 'tutdummy', kk = at ? 5 + sk * 12 : 4.5, dm = at ? 6 + sk * 4 : 4.2, mx = (at ? 110 + sk * 160 : 85) * spd;
       r.tx = clamp(r.tx, 30, W - 30); r.ty = clamp(r.ty, 95, H - 300);
       r.vx += ((r.tx - r.x) * kk - r.vx * dm) * dt; r.vy += ((r.ty - r.y) * kk - r.vy * dm) * dt;
       var sp = Math.hypot(r.vx, r.vy); if (sp > mx) { r.vx *= mx / sp; r.vy *= mx / sp; }
@@ -371,6 +398,23 @@
     }
     Art.stringPoints(r.str, r.ax, r.ay, r.x, r.y + 8, r.mode === 'attack' || r.mode === 'duel' ? 10 : r.sag, T, r.seed);
     updateTail(r, T);
+  }
+  function spawnTutDummy() {
+    var p = player, dir = p.x > W / 2 ? -1 : 1, hx = clamp(p.x + dir * 150, 60, W - 60), hy = clamp(p.y - 15, 250, H - 330), ri = 0, bd = 1e9;
+    for (var i = 0; i < roofs.length; i++) { var dd = Math.abs(roofs[i].x - hx); if (dd < bd) { bd = dd; ri = i; } }
+    var r = makeKite(hx < W / 2 ? -50 : W + 50, hy - 50, { pat: 'diamond', cols: ['#fb8c00', '#3949ab'] });
+    r.name = 'Practice'; r.skill = 0.05; r.mode = 'tutdummy'; r.modeT = 9; r.cd = 0; r.t = 0; r.hx = hx; r.hy = hy; r.tx = hx; r.ty = hy;
+    r.ax = clamp(roofs[ri].x, 14, W - 14); r.ay = cityY() + roofs[ri].y - 16; r.sag = 22; r.w = 44; r.h = 52;
+    rivals.push(r); tut.dummy = r;
+  }
+  function tutOk() { tut.okT = 1; Snd.sfx.good(); petals(player.x, player.y, 12, 160); popup(player.x, player.y - 44, 'WAH! Shabash!', '#7dff8a', 18); }
+  function updateTut(rdt) {
+    var p = player; if (!tut || !p) return;
+    tut.t += rdt; tut.stepT += rdt;
+    if (tut.okT > 0) { tut.okT -= rdt; if (tut.okT <= 0) { tut.step++; tut.stepT = 0; tut.prog = 0; if (tut.step === 2) spawnTutDummy(); } return; }
+    if (tut.step === 0) { if (tut.prog >= 150) tutOk(); }
+    else if (tut.step === 1) { if (khenchDown() && !duel) tut.prog += rdt; if (tut.prog >= 1.4) tutOk(); }
+    else if (tut.step === 4) { tut.fin -= rdt; if (tut.fin <= 0) { tut = null; startGame('real'); } }
   }
   function updateFalling(dt) {
     for (var i = falling.length - 1; i >= 0; i--) {
@@ -402,6 +446,8 @@
     T += rdt;
     var want = (duel ? 0.45 : 1) * (slowT > 0 ? 0.55 : 1);
     ts += (want - ts) * Math.min(1, rdt * 8);
+    if (tut) updateTut(rdt);
+    for (var pk in ptrs) { lastInput = T; break; }
     var dt = rdt * ts, p = player;
     if (strongT > 0) strongT -= rdt; if (slowT > 0) slowT -= rdt;
     if (cheerT > 0) cheerT -= rdt;
@@ -426,19 +472,20 @@
     /* duel */
     if (duel) {
       var d = duel;
-      d.t += rdt; d.ph += rdt * d.speed; if (d.lock > 0) d.lock -= rdt; if (d.msgT > 0) d.msgT -= rdt;
-      d.bar -= duelPush() * rdt; d.spike -= rdt;
-      if (d.spike <= 0) { d.bar -= 0.07 + d.r.skill * 0.08; d.spike = rand(1.2, 2.3); Snd.sfx.rival(); shake = Math.max(shake, 4); sparks(d.ix, d.iy, 6, ['#ffffff', '#ff9a5a'], 120, 0.4); }
-      d.bar = Math.min(d.bar, 1);
-      if (d.bar >= 1) resolveDuel(true); else if (d.bar <= -1) resolveDuel(false); else if (d.t > 7.5) resolveDuel(d.bar > 0);
+      d.t += rdt; if (d.msgT > 0) d.msgT -= rdt;
+      if (khenchDown()) d.bar += 0.18 * tapMul() * (strongT > 0 ? 1.35 : 1) * rdt;
+      d.bar -= duelPush() * rdt;
+      d.bar = Math.min(d.bar, 1); if (d.tut && d.bar < 0.02) d.bar = 0.02;
+      if (d.bar >= 1) resolveDuel(true); else if (d.bar <= -1) resolveDuel(false); else if (!d.tut && d.t > 14) resolveDuel(d.bar > 0);
       Snd.setIntensity(0.9);
     } else {
       Snd.setIntensity(wave >= 3 ? 0.7 : 0.4);
       if (p.alive && p.immuneT <= 0 && waveState !== 'intro') {
         for (var k = 0; k < rivals.length; k++) {
           var r = rivals[k];
-          if (r.x < -10 || r.x > W + 10 || r.mode === 'duel') continue;
-          var hit = strCross(p.str, r.str);
+          if (r.x < -10 || r.x > W + 10 || r.y < 40 || r.mode === 'duel') continue;
+          if (r.mode === 'tutdummy' && (!tut || tut.stepT < 2.5 || r.x > W - 15 || r.x < 15)) continue;
+          var hit = strCross(p.str, r.str, tut ? 14 : 9);
           if (hit) { startDuel(r, hit); break; }
         }
       }
@@ -496,7 +543,7 @@
     for (var i = 0; i < lives; i++) { Art.drawKiteIcon(g, 21 + i * 22, 78, 0.95, p && p.d ? p.d.cols[0] : '#e8242c', p && p.d ? p.d.cols[1] : '#fff'); }
     // wave pill
     g.fillStyle = 'rgba(30,14,60,0.6)'; Art.rr(g, W / 2 - 38, 12, 76, 26, 13); g.fill();
-    txt('WAVE ' + wave, W / 2, 26, 14, '#fff', 'center');
+    txt(tut ? 'TUTORIAL' : 'WAVE ' + wave, W / 2, 26, 14, '#fff', 'center');
     roundBtn('pause', W - 28, 28, 19, function () { g.fillStyle = '#fff'; Art.rr(g, -6, -7, 4.5, 14, 1.5); g.fill(); Art.rr(g, 1.5, -7, 4.5, 14, 1.5); g.fill(); });
     g.fillStyle = 'rgba(30,14,60,0.6)'; Art.rr(g, W - 88, 54, 70, 22, 11); g.fill(); coinIcon(W - 76, 65, 7); txt(String(save.coins), W - 66, 66, 13, '#ffe066', 'left');
     // manja bar
@@ -510,11 +557,13 @@
       txt(st ? 'PAKKA MANJA ' + Math.ceil(strongT) + 's' : 'MANJA', W / 2, by + 6.5, 9, '#fff', 'center', { stroke: 'rgba(30,10,40,0.8)', sw: 2.5 });
     }
     if (slowT > 0) { g.fillStyle = 'rgba(30,14,60,0.6)'; Art.rr(g, W / 2 - 42, 72, 84, 20, 10); g.fill(); txt('SLOW-MO ' + Math.ceil(slowT) + 's', W / 2, 82, 11, '#9fdcff', 'center'); }
-    if (combo > 1) txt('x' + combo + ' COMBO', 14, 100, 14, '#7dff8a', 'left', { stroke: 'rgba(20,50,30,0.85)', sw: 3 });
+    if (combo > 1 && !tut) txt('x' + combo + ' COMBO', 14, 100, 14, '#7dff8a', 'left', { stroke: 'rgba(20,50,30,0.85)', sw: 3 });
     // khench button
-    if (!duel && p && p.alive) {
-      var cx = W - 46, cy = H - 66, r = 36, pr = pullHeld();
+    if (p && p.alive) {
+      var cx = W - 46, cy = H - 66, r = 36, pr = duel ? khenchDown() : pullHeld();
       hits.push({ id: 'khench', x: cx - r - 4, y: cy - r - 4, w: r * 2 + 8, h: r * 2 + 8 });
+      var guideK = duel || (tut && tut.step === 1);
+      if (guideK) { var gp = 0.5 + 0.5 * Math.sin(t * 8); g.strokeStyle = 'rgba(255,240,120,' + (0.45 + 0.4 * gp) + ')'; g.lineWidth = 5; g.beginPath(); g.arc(cx, cy, r + 6 + gp * 7, 0, TAU); g.stroke(); }
       g.save(); g.translate(cx, cy); if (pr) g.scale(0.93, 0.93);
       g.fillStyle = 'rgba(0,0,0,0.3)'; g.beginPath(); g.arc(0, 4, r, 0, TAU); g.fill();
       var g2 = g.createLinearGradient(0, -r, 0, r); g2.addColorStop(0, pr ? '#ffe45a' : '#ff9d2e'); g2.addColorStop(1, pr ? '#ff9d2e' : '#e0431f');
@@ -523,36 +572,116 @@
       g.beginPath(); g.moveTo(-9, -4); g.lineTo(0, -14); g.lineTo(9, -4); g.moveTo(0, -14); g.lineTo(0, 0); g.stroke();
       txt('KHENCH', 0, 14, 11, '#fff', 'center', { stroke: 'rgba(90,20,10,0.8)', sw: 3 });
       g.restore();
+      if (duel) txt('DABAYE RAKHO', cx, cy - r - 12, 9, '#fff6b0', 'center', { stroke: 'rgba(60,20,10,0.9)', sw: 3 });
     }
-    if (hintT > 0 && !duel && waveState !== 'clear') {
-      g.globalAlpha = clamp(hintT, 0, 1);
-      var hy = H - 250; g.fillStyle = 'rgba(20,10,50,0.62)'; Art.rr(g, 30, hy - 26, W - 60, 52, 14); g.fill();
-      txt('Ungli drag karo = patang udao', W / 2, hy - 8, 14, '#fff', 'center');
-      txt('KHENCH dabao = upar + tez | chhodo = dheel', W / 2, hy + 12, 12, '#ffe9a8', 'center');
+    // idle / first-time hint (Hinglish)
+    var idleS = (p && p.alive && !duel && !tut && Object.keys(ptrs).length === 0) ? T - lastInput : 0;
+    if ((hintT > 0 || idleS > 5) && !duel && !tut && waveState !== 'clear' && p && p.alive) {
+      var lines;
+      var attacker = false; for (var ri = 0; ri < rivals.length; ri++) if (rivals[ri].mode === 'attack') attacker = true;
+      if (idleS > 5) {
+        var HN = [['Ungli drag karo = patang udao', 'Patang ko dushman ke paas le jao'], ['KHENCH dabao = patang upar jaayegi', 'Neeche wala orange button dabao'], ['Dushman ki dor se apni dor takrao', 'Phir jaldi jaldi TAP = patang kategi!']];
+        lines = attacker ? ['Dushman aa raha hai! Ruko ya paas jao', 'Uski dor se apni dor takrao'] : HN[Math.floor((idleS - 5) / 3.5) % 3];
+      } else lines = ['Ungli drag karo = patang udao', 'KHENCH dabao = upar + tez | chhodo = dheel'];
+      var ha = idleS > 5 ? 0.85 + 0.15 * Math.sin(t * 5) : clamp(hintT, 0, 1);
+      g.globalAlpha = ha;
+      var hy = H - 250; g.fillStyle = 'rgba(20,10,50,0.7)'; Art.rr(g, 24, hy - 28, W - 48, 56, 14); g.fill(); g.strokeStyle = 'rgba(255,214,120,0.8)'; g.lineWidth = 2; Art.rr(g, 24, hy - 28, W - 48, 56, 14); g.stroke();
+      txt(lines[0], W / 2, hy - 8, 15, '#fff', 'center');
+      txt(lines[1], W / 2, hy + 13, 12, '#ffe9a8', 'center');
       g.globalAlpha = 1;
     }
   }
+  function drawFinger(x, y, press, a) {
+    g.save(); g.translate(x, y); g.rotate(-0.22); if (press) g.scale(0.9, 0.9); g.globalAlpha = a == null ? 1 : a;
+    g.fillStyle = 'rgba(0,0,0,0.25)'; Art.rr(g, -17, 6, 34, 58, 12); g.fill();
+    g.fillStyle = '#ffe3c8'; g.strokeStyle = '#7a4a30'; g.lineWidth = 2.5;
+    Art.rr(g, -17, 28, 34, 38, 12); g.fill(); g.stroke();
+    Art.rr(g, -9, -2, 18, 44, 9); g.fill(); g.stroke();
+    g.fillStyle = 'rgba(255,255,255,0.55)'; Art.rr(g, -5, 3, 5, 12, 2.5); g.fill();
+    g.restore(); g.globalAlpha = 1;
+  }
+  function drawArrow(x, y, ang, size, col) {
+    g.save(); g.translate(x, y); g.rotate(ang); g.fillStyle = col; g.strokeStyle = 'rgba(40,10,40,0.85)'; g.lineWidth = 3; g.lineJoin = 'round';
+    g.beginPath(); g.moveTo(size, 0); g.lineTo(0, -size * 0.7); g.lineTo(0, -size * 0.28); g.lineTo(-size * 0.9, -size * 0.28); g.lineTo(-size * 0.9, size * 0.28); g.lineTo(0, size * 0.28); g.lineTo(0, size * 0.7); g.closePath(); g.stroke(); g.fill(); g.restore();
+  }
   function drawDuelUI(t) {
     var d = duel; if (!d) return;
-    var px = 24, py = H - 218, pw = W - 48, ph = 126;
-    g.fillStyle = 'rgba(25,10,50,0.82)'; Art.rr(g, px, py, pw, ph, 18); g.fill(); g.strokeStyle = '#ffd78a'; g.lineWidth = 2.5; Art.rr(g, px, py, pw, ph, 18); g.stroke();
+    var pu = 0.5 + 0.5 * Math.sin(t * 10);
+    // pulsing glow: whole screen edge + the crossing point
+    var vg = g.createRadialGradient(W / 2, H / 2, H * 0.22, W / 2, H / 2, H * 0.78); vg.addColorStop(0, 'rgba(255,190,50,0)'); vg.addColorStop(1, 'rgba(255,160,40,' + (0.2 + 0.25 * pu) + ')'); g.fillStyle = vg; g.fillRect(0, 0, W, H);
+    var gg = g.createRadialGradient(d.ix, d.iy, 4, d.ix, d.iy, 46 + pu * 16); gg.addColorStop(0, 'rgba(255,255,220,0.95)'); gg.addColorStop(0.4, 'rgba(255,214,90,0.55)'); gg.addColorStop(1, 'rgba(255,170,40,0)');
+    g.fillStyle = gg; g.beginPath(); g.arc(d.ix, d.iy, 62, 0, TAU); g.fill();
+    g.strokeStyle = 'rgba(255,255,255,' + (0.5 + 0.4 * pu) + ')'; g.lineWidth = 3; g.beginPath(); g.arc(d.ix, d.iy, 20 + pu * 10, 0, TAU); g.stroke();
+    // big instruction
+    var sc = 1 + 0.06 * Math.sin(t * 10), alt = Math.floor(d.t / 1.5) % 2, ty = Math.round(H * 0.28);
+    g.save(); g.translate(W / 2, ty); g.scale(sc, sc);
+    txt('PENCH LADA!', 0, 0, 40, '#ffe066', 'center', { stroke: '#7a1030', sw: 9, sh: 3 });
+    g.restore();
+    txt(alt === 0 || d.tut ? 'JALDI JALDI TAP KARO!' : 'KHENCH DABAO!', W / 2, ty + 38, 24, '#ffffff', 'center', { stroke: '#7a1030', sw: 6 });
+    if (d.msgT > 0) txt(d.msg, W / 2, ty + 74, 26, d.msgCol, 'center', { stroke: 'rgba(30,10,40,0.9)', sw: 6 });
     // tug bar
-    var bx = px + 16, bw = pw - 32, by = py + 18;
-    txt('TUM', bx, by - 4, 11, '#9dffa8', 'left'); txt(d.r.name.toUpperCase(), bx + bw, by - 4, 11, '#ff9c8a', 'right');
-    g.fillStyle = 'rgba(255,255,255,0.14)'; Art.rr(g, bx, by + 2, bw, 12, 6); g.fill();
-    var mid = bx + bw / 2, fx = mid + d.bar * bw / 2;
-    g.fillStyle = d.bar >= 0 ? '#5fe070' : '#ff6a55'; if (d.bar >= 0) Art.rr(g, mid, by + 2, Math.max(2, fx - mid), 12, 6); else Art.rr(g, fx, by + 2, Math.max(2, mid - fx), 12, 6); g.fill();
-    g.fillStyle = '#fff'; g.beginPath(); g.arc(fx, by + 8, 7, 0, TAU); g.fill(); g.strokeStyle = '#333'; g.lineWidth = 1.5; g.stroke();
-    // meter
-    var my = py + 62, mh = 24, zh = zoneHalf();
-    g.fillStyle = 'rgba(255,255,255,0.12)'; Art.rr(g, bx, my - mh / 2, bw, mh, 12); g.fill();
-    g.fillStyle = 'rgba(80,230,110,0.85)'; Art.rr(g, bx + bw * (0.5 - zh), my - mh / 2, bw * zh * 2, mh, 8); g.fill();
-    g.fillStyle = '#fff3a0'; Art.rr(g, bx + bw * (0.5 - zh * 0.42), my - mh / 2, bw * zh * 0.84, mh, 6); g.fill();
-    var mxp = bx + bw * markerPos(), lk = d.lock > 0;
-    g.fillStyle = lk ? '#ff5a4a' : '#ffffff'; g.strokeStyle = 'rgba(0,0,0,0.5)'; g.lineWidth = 2; Art.rr(g, mxp - 4, my - mh / 2 - 6, 8, mh + 12, 4); g.fill(); g.stroke();
-    if (d.msgT > 0) txt(d.msg, W / 2, py - 14, 24, d.msgCol, 'center', { stroke: 'rgba(30,10,40,0.9)', sw: 5 });
-    var pulse = 1 + Math.sin(t * 12) * 0.06;
-    g.save(); g.translate(W / 2, py + 102); g.scale(pulse, pulse); txt(lk ? 'RUKO...' : 'HARI PATTI PE TAP KARO!', 0, 0, 15, lk ? '#ff9c8a' : '#ffffff', 'center', { stroke: 'rgba(30,10,40,0.85)', sw: 4 }); g.restore();
+    var px = 24, py = H - 232, pw = W - 48, ph = 108;
+    g.fillStyle = 'rgba(25,10,50,0.82)'; Art.rr(g, px, py, pw, ph, 18); g.fill(); g.strokeStyle = '#ffd78a'; g.lineWidth = 2.5; Art.rr(g, px, py, pw, ph, 18); g.stroke();
+    var bx = px + 16, bw = pw - 32, by = py + 30, f = clamp((d.bar + 1) / 2, 0, 1);
+    txt('TUM', bx, py + 16, 12, '#9dffa8', 'left'); txt(d.r.name.toUpperCase(), bx + bw, py + 16, 12, '#ff9c8a', 'right');
+    g.fillStyle = '#ff6a55'; Art.rr(g, bx, by, bw, 22, 11); g.fill();
+    g.fillStyle = '#5fe070'; Art.rr(g, bx, by, Math.max(10, bw * f), 22, 11); g.fill();
+    g.fillStyle = 'rgba(255,255,255,0.3)'; Art.rr(g, bx + 4, by + 3, Math.max(4, bw * f - 8), 6, 3); g.fill();
+    g.strokeStyle = 'rgba(255,255,255,0.8)'; g.lineWidth = 2; Art.rr(g, bx, by, bw, 22, 11); g.stroke();
+    g.fillStyle = '#fff'; g.beginPath(); g.arc(bx + bw * f, by + 11, 11, 0, TAU); g.fill(); g.strokeStyle = '#333'; g.lineWidth = 2; g.stroke();
+    var pp = 1 + Math.sin(t * 12) * 0.06;
+    g.save(); g.translate(W / 2, py + 82); g.scale(pp, pp); txt('SCREEN PE KAHIN BHI TAP TAP TAP!', 0, 0, 14, '#ffffff', 'center', { stroke: 'rgba(30,10,40,0.85)', sw: 4 }); g.restore();
+    // animated finger: always in tutorial, and for the first few real fights
+    if (d.tut || save.duels <= 4) {
+      var bob = Math.abs(Math.sin(t * 9)), fx = W / 2 - 30, fy = py - 76 + bob * 22;
+      g.strokeStyle = 'rgba(255,255,255,' + (0.8 - bob * 0.6) + ')'; g.lineWidth = 3; g.beginPath(); g.arc(fx, py - 54, 8 + (1 - bob) * 22, 0, TAU); g.stroke();
+      drawFinger(fx, fy, bob < 0.25);
+    }
+  }
+  function drawTutUI(t) {
+    if (!tut || !player) return;
+    var p = player, st = tut.step, i;
+    button('tutskip', W - 50, 106, 84, 30, 'SKIP >>', 'grey', 12);
+    var T0 = ['Ungli ghumao - patang udao', 'KHENCH dabao - upar jao', 'Iski dor se dor takrao', 'Tap tap tap karo!', 'KAI PO CHE! Shabash!'];
+    var T1 = ['Screen par ungli drag karo, patang peeche peeche aayegi', 'Neeche orange KHENCH button dabake rakho', 'Apni patang ko is patang ki dor tak le jao', 'Screen par kahin bhi jaldi jaldi tap karo', 'Ab asli khel shuru hota hai...'];
+    var py = 128, ph = 76, pu = 0.5 + 0.5 * Math.sin(t * 6);
+    g.fillStyle = 'rgba(20,10,50,0.82)'; Art.rr(g, 14, py, W - 28, ph, 16); g.fill(); g.strokeStyle = st === 4 ? '#7dff8a' : '#ffd78a'; g.lineWidth = 2.5; Art.rr(g, 14, py, W - 28, ph, 16); g.stroke();
+    g.fillStyle = '#ff7a3d'; Art.rr(g, 24, py + 8, 66, 18, 9); g.fill(); txt('STEP ' + Math.min(st + 1, 4) + '/4', 57, py + 17.5, 11, '#fff', 'center');
+    txt(T0[st], W / 2, py + 40, st === 4 ? 26 : 21, st === 4 ? '#7dff8a' : '#ffffff', 'center', { stroke: 'rgba(30,10,40,0.9)', sw: 5 });
+    txt(T1[st], W / 2, py + 63, 11.5, '#ffe9a8', 'center', { w: '700' });
+    var pr = st === 0 ? tut.prog / 150 : st === 1 ? tut.prog / 1.4 : 0;
+    if (st <= 1) { g.fillStyle = 'rgba(255,255,255,0.15)'; Art.rr(g, 100, py + 14, W - 100 - 26, 6, 3); g.fill(); g.fillStyle = '#7dff8a'; Art.rr(g, 100, py + 14, Math.max(4, (W - 126) * clamp(pr, 0, 1)), 6, 3); g.fill(); }
+    if (tut.okT > 0) {
+      g.fillStyle = 'rgba(40,200,90,0.9)'; g.beginPath(); g.arc(W - 40, py + 40, 20, 0, TAU); g.fill();
+      g.strokeStyle = '#fff'; g.lineWidth = 5; g.lineCap = 'round'; g.lineJoin = 'round'; g.beginPath(); g.moveTo(W - 49, py + 40); g.lineTo(W - 42, py + 47); g.lineTo(W - 30, py + 32); g.stroke();
+      return;
+    }
+    if (st === 0) {
+      // drag hint: finger sweeping left-right below the kite, arrows both sides
+      var sw = Math.sin(t * 2.2), fx = clamp(p.x, 70, W - 70) + sw * 70, fy = Math.min(p.y + 90, H - 250);
+      g.strokeStyle = 'rgba(255,255,255,0.45)'; g.lineWidth = 4; g.setLineDash([6, 8]); g.beginPath(); g.moveTo(fx - 70 - sw * 0, fy + 6); g.lineTo(fx + 0, fy + 6); g.stroke(); g.setLineDash([]);
+      drawArrow(p.x - 62 - pu * 6, p.y, Math.PI, 20, '#ffe066'); drawArrow(p.x + 62 + pu * 6, p.y, 0, 20, '#ffe066');
+      drawFinger(fx, fy, false);
+    } else if (st === 1) {
+      var bx = W - 46, by = H - 66;
+      drawArrow(bx - 4, by - 98 - pu * 8, Math.PI / 2, 24, '#ffe066');
+      drawFinger(bx + 4, by - 6 + (khenchDown() ? 6 : 0), khenchDown(), 0.92);
+    } else if (st === 2 && tut.dummy && rivals.indexOf(tut.dummy) >= 0) {
+      var r = tut.dummy, a = Math.atan2(r.y - p.y, r.x - p.x), dist = Math.hypot(r.x - p.x, r.y - p.y);
+      g.strokeStyle = 'rgba(255,230,120,' + (0.5 + 0.4 * pu) + ')'; g.lineWidth = 4; g.beginPath(); g.arc(r.x, r.y, 36 + pu * 6, 0, TAU); g.stroke();
+      if (dist > 70) drawArrow(p.x + Math.cos(a) * (46 + pu * 8), p.y + Math.sin(a) * (46 + pu * 8), a, 20, '#ffe066');
+      txt('IDHAR!', r.x, r.y - r.h * 0.5 - 24, 14, '#ffe066', 'center', { stroke: 'rgba(40,10,40,0.9)', sw: 4 });
+    }
+  }
+  function drawOffscreen(rv, t) {
+    if (!(rv.x < 6 || rv.x > W - 6 || rv.y < 60)) return;
+    var ex = clamp(rv.x, 24, W - 24), ey = clamp(rv.y, 112, H - 330), a = Math.atan2(rv.y - ey, rv.x - ex), pu = 0.5 + 0.5 * Math.sin(t * 8);
+    if (Math.hypot(rv.x - ex, rv.y - ey) < 2) return;
+    g.save(); g.translate(ex, ey);
+    g.fillStyle = 'rgba(20,10,50,0.75)'; g.beginPath(); g.arc(0, 0, 17 + pu * 2, 0, TAU); g.fill(); g.strokeStyle = rv.cols[0]; g.lineWidth = 3; g.stroke();
+    g.rotate(a); g.fillStyle = '#fff'; g.beginPath(); g.moveTo(11, 0); g.lineTo(-4, -8); g.lineTo(-4, 8); g.closePath(); g.fill();
+    g.restore();
+    txt(rv.name, clamp(ex + (ex < W / 2 ? 36 : -36), 34, W - 34), ey, 10, '#fff', 'center', { stroke: 'rgba(30,10,40,0.85)', sw: 3 });
   }
   function drawPlay(t, dt) {
     var wm = 1 + (pullHeld() ? 0.6 : 0);
@@ -576,11 +705,14 @@
       txt(rv.name, rv.x, rv.y - rv.h * 0.5 - 9, 10, '#fff', 'center', { stroke: 'rgba(30,10,40,0.85)', sw: 3 });
       if (rv.mode === 'attack' && Math.sin(t * 14) > -0.2) txt('!', rv.x + rv.w * 0.5 + 4, rv.y - rv.h * 0.5, 18, '#ff4a3a', 'center', { stroke: '#fff', sw: 3 });
     }
+    if (p && p.alive && p.immuneT > 0 && !tut) { var sp2 = 0.5 + 0.5 * Math.sin(t * 6), sg = g.createRadialGradient(p.x, p.y, 10, p.x, p.y, 44); sg.addColorStop(0, 'rgba(150,230,255,0)'); sg.addColorStop(1, 'rgba(150,230,255,' + (0.35 + 0.25 * sp2) + ')'); g.fillStyle = sg; g.beginPath(); g.arc(p.x, p.y, 44, 0, TAU); g.fill(); g.strokeStyle = 'rgba(190,240,255,0.8)'; g.lineWidth = 2; g.beginPath(); g.arc(p.x, p.y, 36 + sp2 * 3, 0, TAU); g.stroke(); txt('SURAKSHIT', p.x, p.y - 50, 10, '#bff0ff', 'center', { stroke: 'rgba(20,10,50,0.85)', sw: 3 }); }
     if (p && p.alive) { var fl = p.immuneT > 0 ? (Math.sin(t * 24) > 0 ? 1 : 0.4) : 1; drawKiteObj(p, t, fl); if (p.immuneT <= 0 && !duel && waveState === 'fight') { /* arrow marker */ g.fillStyle = 'rgba(255,255,255,0.6)'; g.beginPath(); g.moveTo(p.x, p.y - 38); g.lineTo(p.x - 5, p.y - 46); g.lineTo(p.x + 5, p.y - 46); g.closePath(); g.fill(); } }
     if (duel) { g.fillStyle = 'rgba(0,0,0,' + clamp(duel.t * 2, 0, 0.18) + ')'; g.fillRect(0, 0, W, H); drawKiteObj(duel.r, t, 1); if (p.alive) drawKiteObj(p, t, 1); }
+    for (i = 0; i < rivals.length; i++) drawOffscreen(rivals[i], t);
     drawFx(t);
     drawHud(t);
     drawDuelUI(t);
+    drawTutUI(t);
     if (paused) {
       g.fillStyle = 'rgba(10,5,30,0.7)'; g.fillRect(0, 0, W, H);
       panel(70, H / 2 - 130, 260, 260);
@@ -641,8 +773,9 @@
     g.restore(); g.restore();
     if (e > 0.7) {
       button('play', W / 2, H - 300, 230, 68, 'PLAY', 'orange', 34);
-      button('shop', W / 2 - 82, H - 226, 150, 48, 'KITES', 'purple', 18);
-      button('how', W / 2 + 82, H - 226, 150, 48, 'HOW TO PLAY', 'teal', 14);
+      if (!save.tutDone) txt('Pehle chhota tutorial hoga', W / 2, H - 258, 11, '#ffe9a8', 'center', { stroke: 'rgba(30,10,50,0.85)', sw: 3, w: '700' });
+      button('shop', W / 2 - 82, H - 214, 150, 48, 'KITES', 'purple', 18);
+      button('how', W / 2 + 82, H - 214, 150, 48, 'HOW TO PLAY', 'teal', 14);
     }
     roundBtn('sound', W - 30, 30, 20, function () { drawSpeaker(save.sound); });
     g.fillStyle = 'rgba(30,14,60,0.6)'; Art.rr(g, 12, 14, 110, 32, 16); g.fill(); coinIcon(30, 30, 9); txt(String(save.coins), 44, 31, 16, '#ffe066', 'left');
@@ -659,23 +792,24 @@
   function drawHow(t, dt) {
     dimBackdrop(t, dt);
     txt('KAISE KHELE', W / 2, 44, 34, '#fff', 'center', { stroke: '#6a1b4a', sw: 7 });
-    panel(16, 74, W - 32, H - 74 - 100);
+    panel(16, 74, W - 32, H - 74 - 150);
     var steps = [
       ['1', 'UDAO', 'Ungli screen par drag karo. Patang usi taraf udegi.', '#37d5c3'],
-      ['2', 'KHENCH', 'KHENCH button dabao (ya ungli rok kar rakho): patang upar jaati hai aur tez udti hai. Chhodo = dheel.', '#ffb02e'],
-      ['3', 'KAATO', 'Dushman ki dor apni dor se cross karo. Ladai shuru! Hari patti par TAP karo, PERFECT = zyada zor.', '#ff6b6b'],
-      ['4', 'MANJA', 'Khench karne se manja ghat-ta hai. Manja kam = hari patti chhoti aur dushman tagda!', '#b06cff'],
-      ['5', 'POWER', 'Item pakdo: Pakka Manja, Slow-mo, Extra Patang. 3 patang kati toh game over.', '#6fe36a']
+      ['2', 'KHENCH', 'KHENCH button dabao: patang upar jaati hai, tez udti hai. Chhodo = dheel.', '#ffb02e'],
+      ['3', 'KAATO', 'Dushman ki dor se apni dor takrao. Dushman khud tumhare paas aayega!', '#ff6b6b'],
+      ['4', 'PENCH', 'Dor takrayi to screen par jaldi jaldi TAP karo (ya KHENCH dabaye rakho). Tumhara bar bhar gaya = dushman ki patang kat gayi!', '#b06cff'],
+      ['5', 'POWER', '5 patang milti hain. Item pakdo: Pakka Manja, Slow-mo, Extra Patang.', '#6fe36a']
     ];
-    var y = 100, avail = H - 74 - 100 - 40, per = avail / 5;
+    var y = 100, avail = H - 74 - 150 - 30, per = avail / 5;
     for (var i = 0; i < steps.length; i++) {
-      var s = steps[i], cy = y + i * per + 6;
+      var s = steps[i], cy = y + i * per + 4;
       g.fillStyle = s[3]; g.beginPath(); g.arc(46, cy + 14, 15, 0, TAU); g.fill(); txt(s[0], 46, cy + 15, 17, '#fff', 'center', { stroke: 'rgba(0,0,0,0.3)', sw: 3 });
       txt(s[1], 70, cy + 8, 16, s[3], 'left', { stroke: 'rgba(20,5,40,0.8)', sw: 4 });
       var fs = per > 95 ? 14 : 12, ls = wrap(s[2], W - 32 - 70 - 12, fs);
       for (var j = 0; j < ls.length; j++) txt(ls[j], 70, cy + 30 + j * (fs + 4), fs, '#f1e9ff', 'left', { w: '600' });
     }
-    button('back', W / 2, H - 48, 190, 54, 'BACK', 'orange', 22);
+    button('tutor', W / 2, H - 100, 270, 50, 'TUTORIAL KHELO', 'green', 20);
+    button('back', W / 2, H - 40, 190, 50, 'BACK', 'orange', 22);
   }
   function setShopKite() { shopKite = makeKite(0, 0, DESIGNS[shopIdx]); shopKite.w = 44; shopKite.h = 52; }
   function drawShop(t, dt) {
@@ -732,7 +866,10 @@
   }
   function activate(id) {
     Snd.sfx.click();
-    if (id === 'play' || id === 'again') startGame();
+    if (id === 'play') startGame();
+    else if (id === 'again') startGame('real');
+    else if (id === 'tutor') startGame('tut');
+    else if (id === 'tutskip') { save.tutDone = true; persist(); tut = null; startGame('real'); }
     else if (id === 'shop') setState('shop');
     else if (id === 'how') setState('how');
     else if (id === 'back' || id === 'menu') setState('title');
@@ -768,8 +905,9 @@
     if (STATE === 'intro') { if (T > 0.4) setState('title'); return; }
     var h = hitAt(p.x, p.y);
     if (STATE === 'play' && !paused) {
-      if (h && h.id === 'khench') ptr.role = 'pull';
-      else if (h && h.id === 'pause') { ptr.role = 'btn'; ptr.btn = 'pause'; pressedId = 'pause'; }
+      lastInput = T;
+      if (h && h.id === 'khench') { ptr.role = 'pull'; if (duel) duelTap(); }
+      else if (h && (h.id === 'pause' || h.id === 'tutskip')) { ptr.role = 'btn'; ptr.btn = h.id; pressedId = h.id; }
       else if (duel) { ptr.role = 'tap'; duelTap(); }
       else if (player && player.alive) { ptr.role = 'steer'; ptr.kx = player.x; ptr.ky = player.y; }
     } else if (h) { ptr.role = 'btn'; ptr.btn = h.id; pressedId = h.id; }
@@ -777,7 +915,9 @@
   }, { passive: false });
   cv.addEventListener('pointermove', function (e) {
     e.preventDefault(); var ptr = ptrs[e.pointerId]; if (!ptr) return;
-    var p = toL(e); ptr.x = p.x; ptr.y = p.y;
+    var p = toL(e);
+    if (ptr.role === 'steer' && tut && tut.step === 0 && !tut.okT) tut.prog += Math.hypot(p.x - ptr.x, p.y - ptr.y);
+    ptr.x = p.x; ptr.y = p.y; lastInput = T;
     if (ptr.role === 'btn') { var h = hitAt(p.x, p.y); pressedId = h && h.id === ptr.btn ? ptr.btn : null; }
   }, { passive: false });
   function endPtr(e, cancel) {
@@ -836,11 +976,11 @@
   requestAnimationFrame(frame);
 
   window.__PL = {
-    state: function () { return { s: STATE, score: score, lives: lives, wave: wave, duel: !!duel, rivals: rivals.length, falling: falling.length, paused: paused, ts: ts, H: H }; },
+    state: function () { return { s: STATE, score: score, lives: lives, wave: wave, duel: !!duel, bar: duel ? duel.bar : null, tut: tut ? tut.step : -1, tutDone: save.tutDone, rivals: rivals.length, falling: falling.length, paused: paused, ts: ts, H: H }; },
     start: function () { startGame(); },
     setState: function (s) { STATE = s; stateT = 0; trans = null; fadeA = 0; onEnter(s); },
     forceDuel: function () { if (!rivals.length || !player || !player.alive) return false; var r = rivals[0]; r.x = player.x + 40; r.y = player.y - 30; var pt = { x: (player.x + r.x) / 2, y: (player.y + r.y) / 2 }; player.immuneT = 0; startDuel(r, pt); return true; },
-    tapDuel: function () { duelTap(); }, duelMarker: function () { return duel ? markerPos() : -1; },
+    tapDuel: function () { duelTap(); }, duelBar: function () { return duel ? duel.bar : null; }, tutState: function () { return tut ? { step: tut.step, prog: tut.prog, okT: tut.okT, dummy: tut.dummy ? { x: tut.dummy.x, y: tut.dummy.y } : null } : null; }, startTut: function () { startGame('tut'); }, resetTut: function () { save.tutDone = false; persist(); },
     winDuel: function () { if (duel) resolveDuel(true); }, loseDuel: function () { if (duel) resolveDuel(false); },
     coins: function (n) { save.coins = n; persist(); }, player: function () { return player; }, dayT: function (d) { targetD = d; sceneD = d; }, shopIdx: function (i) { shopIdx = i; setShopKite(); },
     clear: function () { rivals.length = 0; clearWave(); }
